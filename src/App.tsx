@@ -5,6 +5,8 @@ import { ArrowRight, Menu, AudioLines, Bell, Check, CloudRain, Feather, Heart, M
 
 import { useSpecky } from './hooks/useSpecky';
 import { FREE_CONVERSATION_DISCLOSURE } from './lib/freeConversation';
+import { recognitionConstructor } from './lib/browserVoice';
+import { LOCAL_SPEECH_DOWNLOAD_ESTIMATE_MB } from './lib/localSpeech';
 
 import { Modal } from './components/Modal';
 
@@ -37,6 +39,7 @@ function Switch({ checked, onChange, label, detail }: { checked:boolean; onChang
 export default function App() {
 
   const specky=useSpecky();
+  const onDeviceListening=!recognitionConstructor();
 
   const [panel,setPanel]=useState<'settings'|'memories'|'about'|'menu'|'history'|'voice'|null>(null);
 
@@ -144,7 +147,7 @@ export default function App() {
 
       <div className="stage-caption" aria-live="off">
 
-        {specky.isRecording?<p>Mi a listen. Take yuh time.</p>:specky.pending?<p aria-label="Specky is thinking" className="caption-thinking">Give him a moment<span>…</span></p>:<p>{latestAssistant?.text}</p>}
+        {specky.voiceProgress?<p role="status">{specky.voiceProgress}</p>:specky.isRecording?<p>Mi a listen. Take yuh time.</p>:specky.pending?<p aria-label="Specky is thinking" className="caption-thinking">Give him a moment<span>…</span></p>:<p>{latestAssistant?.text}</p>}
 
         {latestAssistant?.interrupted&&<small>You stopped this reply</small>}
 
@@ -158,13 +161,13 @@ export default function App() {
 
         <div className="voice-orbit" aria-hidden="true"><i/><i/><i/></div>
 
-        <button id="voice-control" type="button" className="voice-button" disabled={!specky.ready||(!active&&!specky.isRecording&&freeWait>0)} aria-label={specky.isRecording?'Finish speaking':active?'Stop Specky’s reply':'Talk to SpeckyG'} aria-pressed={specky.isRecording} onClick={()=>{setAutoScroll(true);if(active)specky.stop();else if(!voiceChosen)setPanel('voice');else void specky.toggleMic();}}>
+        <button id="voice-control" type="button" className="voice-button" disabled={!specky.ready||(!active&&!specky.isRecording&&freeWait>0)} aria-label={specky.voicePhase==='loading'||specky.voicePhase==='opening'?'Cancel voice setup':specky.voicePhase==='transcribing'?'Cancel speech recognition':specky.isRecording?'Finish speaking':active?'Stop Specky’s reply':'Talk to SpeckyG'} aria-pressed={specky.isRecording} onClick={()=>{setAutoScroll(true);if(active)specky.stop();else if(!voiceChosen)setPanel('voice');else void specky.toggleMic();}}>
 
           {specky.isRecording?<Check size={28}/>:active?<Square size={22} fill="currentColor"/>:<Mic size={29}/>}
 
         </button>
 
-        <span className="voice-hint">{specky.isRecording?'Listening · tap when you’re done':specky.state==='thinking'?'A moment…':specky.state==='speaking'?'Specky’s talking · tap to interrupt':freeWait>0?`Free service ready in ${freeWait}s`:'Tap to talk'}</span>
+        <span className="voice-hint">{specky.voicePhase==='loading'?'Loading voice pack · tap to cancel':specky.voicePhase==='opening'?'Opening microphone · tap to cancel':specky.voicePhase==='transcribing'?'Recognizing speech · tap to cancel':specky.isRecording?'Listening · tap when you’re done':specky.state==='thinking'?'A moment…':specky.state==='speaking'?'Specky’s talking · tap to interrupt':freeWait>0?`Free service ready in ${freeWait}s`:'Tap to talk'}</span>
 
         {specky.isRecording&&<button className="cancel-voice" aria-label="Cancel recording" onClick={specky.stop}>Cancel</button>}
 
@@ -177,7 +180,7 @@ export default function App() {
 
 
     <Modal open={panel==='voice'} onClose={()=>setPanel(null)} title="Come, have a word." subtitle="Voice in. Specky answers aloud.">
-      <div className="voice-choice-content"><p className="voice-choice-lead">Free online conversation · ages 16+</p><p>{FREE_CONVERSATION_DISCLOSURE}</p><p>By starting free conversation, you confirm you’re 16 or older, as required by this service. The scripted preview is available separately.</p><p>Your browser handles listening and speaking. Its speech service may process your audio. Specky’s Patois and voice are still being refined.</p><button className="primary-button" onClick={()=>{specky.setMode('free');setVoiceChosen(true);setPanel(null);void specky.toggleMic();}}><Mic size={18}/>Start free conversation</button><button className="secondary-button" onClick={()=>{specky.setMode('demo');setVoiceChosen(true);setPanel(null);void specky.toggleMic();}}>Try scripted voice preview</button><small>There’s no paid fallback. Free online may pause or be unavailable. <a href="https://raw.githubusercontent.com/pollinations/pollinations/main/pollinations.ai/public/legal/PRIVACY_POLICY.md" target="_blank" rel="noreferrer">Privacy</a> · <a href="https://raw.githubusercontent.com/pollinations/pollinations/main/pollinations.ai/public/legal/TERMS_OF_SERVICE.md" target="_blank" rel="noreferrer">Terms</a></small></div>
+      <div className="voice-choice-content"><p className="voice-choice-lead">Free online conversation · ages 16+</p><p>{FREE_CONVERSATION_DISCLOSURE}</p><p>By starting free conversation, you confirm you’re 16 or older, as required by this service. The scripted preview is available separately.</p><p>{onDeviceListening?`This browser uses free on-device listening. First use downloads a voice pack of about ${LOCAL_SPEECH_DOWNLOAD_ESTIMATE_MB} MB from Hugging Face and jsDelivr. It can take a little time; later uses reuse cached files. Your recording stays on this device for transcription.`:"Your browser handles listening. Its speech service may process your audio."} Replies use your device’s available voice. Specky’s Patois and voice are still being refined.</p><button className="primary-button" onClick={()=>{specky.setMode('free');setVoiceChosen(true);setPanel(null);void specky.toggleMic();}}><Mic size={18}/>Start free conversation</button><button className="secondary-button" onClick={()=>{specky.setMode('demo');setVoiceChosen(true);setPanel(null);void specky.toggleMic();}}>Try scripted voice preview</button><small>There’s no paid fallback. Free online may pause or be unavailable. <a href="https://raw.githubusercontent.com/pollinations/pollinations/main/pollinations.ai/public/legal/PRIVACY_POLICY.md" target="_blank" rel="noreferrer">Privacy</a> · <a href="https://raw.githubusercontent.com/pollinations/pollinations/main/pollinations.ai/public/legal/TERMS_OF_SERVICE.md" target="_blank" rel="noreferrer">Terms</a></small></div>
     </Modal>
     <Modal open={panel==='menu'} onClose={()=>setPanel(null)} title="On the perch." subtitle="A few things, whenever you need them.">
 
@@ -187,7 +190,7 @@ export default function App() {
 
         <details className="perch-extra"><summary>A little island life</summary><div className="island-extra-actions"><button aria-label="Stir the palm leaves" onClick={()=>{interact('leaves');setPanel(null);}}><Wind size={18}/>Breeze</button><button aria-label="Play the little radio" onClick={()=>{interact('radio');setPanel(null);}}><Music2 size={18}/>Radio</button><button aria-label="Ring the shell chime" onClick={()=>{interact('chime');setPanel(null);}}><Bell size={18}/>Chimes</button><button aria-label={night?'Bring back the sunshine':'Switch to blue hour'} aria-pressed={night} onClick={()=>{setNight(value=>!value);setPanel(null);}}>{night?<Sun size={18}/>:<Moon size={18}/>}Light</button><button aria-label={rain?'Stop the passing shower':'Start a passing shower'} aria-pressed={rain} onClick={()=>{setRain(value=>!value);setPanel(null);}}><CloudRain size={18}/>Shower</button><button aria-label="Ask SpeckyG to stretch his wings" onClick={()=>{interact('wing');setPanel(null);}}><Feather size={18}/>Wings</button><button aria-label="Ask SpeckyG to look this way" onClick={()=>{interact('head');setPanel(null);}}><Feather size={18}/>Look here</button><button aria-label="Greet SpeckyG" onClick={()=>{interact('greet');setPanel(null);}}><Feather size={18}/>Say hello</button></div></details>
 
-        <details className="perch-extra"><summary>About this preview</summary><p className="menu-fine-print">SpeckyG is a moving 3D reconstruction of the reference, with an authored face and wing deformation rig. His sides and fine facial detail still need work. <a href={assetUrl('?view=likeness')}>Compare with the original</a></p><p className="menu-fine-print">Moving 3D foliage, birds and water sit within a photographic island setting. {specky.mode==='demo'?'Voice preview uses your browser’s speech service and authored replies. Recognition may be processed by your browser’s provider; it is not open-ended AI conversation.':specky.mode==='free'?'Free online sends recognized conversation text and enabled notes to Pollinations; browser recognition may process audio with your browser provider. One request per 30 seconds per internet address. No API key or payment.':'Live voice sends your recording to the speech service and uses AI-generated replies.'} Recordings stop after 30 seconds. Conversations are not saved here.</p><button className="menu-about" aria-label="About SpeckyG" onClick={()=>setPanel('about')}>Meet SpeckyG<ArrowRight size={15}/></button></details>
+        <details className="perch-extra"><summary>About this preview</summary><p className="menu-fine-print">SpeckyG is a moving 3D reconstruction of the reference, with an authored face and wing deformation rig. His sides and fine facial detail still need work. <a href={assetUrl('?view=likeness')}>Compare with the original</a></p><p className="menu-fine-print">Moving 3D foliage, birds and water sit within a photographic island setting. {specky.mode==='demo'?'Voice preview uses authored replies and device speech. Browsers without built-in recognition use an optional on-device voice pack; other browsers may process audio through their speech provider. This is not open-ended AI conversation.':specky.mode==='free'?'Free online sends recognized conversation text and enabled notes to Pollinations; on-device listening keeps recordings here, while built-in browser recognition may process audio with your browser provider. One request per 30 seconds per internet address. No API key or payment.':'Live voice sends your recording to the speech service and uses AI-generated replies.'} Recordings stop after 30 seconds. Conversations are not saved here.</p><button className="menu-about" aria-label="About SpeckyG" onClick={()=>setPanel('about')}>Meet SpeckyG<ArrowRight size={15}/></button></details>
 
       </div>
 

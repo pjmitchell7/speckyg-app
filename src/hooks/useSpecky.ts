@@ -5,6 +5,8 @@ import { DEFAULT_PREFERENCES, eraseAllData, loadMemories, loadPreferences, remov
 import { TurnGate } from '../lib/turnGate';
 import { recognitionConstructor, type BrowserRecognition } from '../lib/browserVoice';
 import { freeConversation, FREE_CONVERSATION_COOLDOWN_MS, FreeConversationError } from '../lib/freeConversation';
+import { createLocalSpeech, localSpeechSupported, type LocalSpeech, type LocalSpeechProgress } from '../lib/localSpeech';
+import { startPcmRecording, type PcmRecording } from '../lib/pcmRecorder';
 
 const NO_CONFIG: AppConfig = { liveChat: false, liveVoice: false, transcription: false };
 const welcome = (): ChatMessage => ({ id: crypto.randomUUID(), role: 'assistant',
@@ -29,6 +31,8 @@ export function useSpecky() {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [voicePhase, setVoicePhase] = useState<'loading'|'opening'|'transcribing'|null>(null);
+  const [voiceProgress, setVoiceProgress] = useState<string|null>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const gate = useRef(new TurnGate());
   const prefsRef = useRef(preferences);
@@ -42,6 +46,10 @@ export function useSpecky() {
   const frameRef = useRef(0);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recognitionRef = useRef<BrowserRecognition | null>(null);
+  const localSpeechRef = useRef<LocalSpeech | null>(null);
+  const pcmRef = useRef<PcmRecording | null>(null);
+  const finishPcmRef = useRef<() => Promise<void>>(async () => {});
+  const speechStartTimer = useRef<ReturnType<typeof setTimeout>|null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const discardRecording = useRef(false);
@@ -63,6 +71,10 @@ export function useSpecky() {
 
   const releaseMedia = useCallback(() => {
     cancelAnimationFrame(frameRef.current);
+    pcmRef.current?.cancel(); pcmRef.current = null;
+    if (speechStartTimer.current) clearTimeout(speechStartTimer.current);
+    speechStartTimer.current = null;
+    setVoicePhase(null); setVoiceProgress(null);
     const audio = audioRef.current;
     if (audio) { audio.onplay = audio.onended = audio.onerror = null; audio.pause(); audio.removeAttribute('src'); audio.load(); }
     audioRef.current = null;
@@ -100,6 +112,7 @@ export function useSpecky() {
     window.addEventListener('online', online); window.addEventListener('offline', online);
     return () => {
       mounted.current = false; gate.current.cancel();
+      localSpeechRef.current?.dispose(); localSpeechRef.current = null;
       discardRecording.current = true;
       const recognition = recognitionRef.current; recognitionRef.current = null;
       if (recognition) { recognition.onresult = recognition.onend = recognition.onerror = null; recognition.abort(); }
@@ -152,6 +165,8 @@ export function useSpecky() {
       let boundaryTime = 0;
       utterance.onstart = () => {
         if (!gate.current.isCurrent(turn.id)) return;
+        if (speechStartTimer.current) clearTimeout(speechStartTimer.current);
+        speechStartTimer.current = null;
         setState('speaking'); boundaryTime = performance.now();
         const move = (now: number) => {
           if (!gate.current.isCurrent(turn.id) || utteranceRef.current !== utterance) return;
@@ -163,7 +178,12 @@ export function useSpecky() {
       utterance.onboundary = () => { if (gate.current.isCurrent(turn.id)) boundaryTime = performance.now(); };
       utterance.onend = () => { if (gate.current.isCurrent(turn.id)) { releaseMedia(); setState('idle'); failureKind.current = null; } };
       utterance.onerror = () => { if (gate.current.isCurrent(turn.id)) { releaseMedia(); setState('idle'); setError('His voice could not play. Check sound, then tap Hear this reply in history.'); } };
-      setState('thinking'); window.speechSynthesis.speak(utterance); return;
+      setState('thinking');
+      speechStartTimer.current = setTimeout(() => {
+        if (!gate.current.isCurrent(turn.id) || utteranceRef.current !== utterance) return;
+        releaseMedia(); setState('idle'); setError('The device voice did not start. Check sound and an installed system voice, then tap Retry.');
+      }, 10_000);
+      window.speechSynthesis.speak(utterance); return;
     }
     if (!config.liveVoice) { setState('idle'); setError('The live voice service is not connected.'); return; }
     try {
@@ -264,13 +284,63 @@ export function useSpecky() {
   }, [request, warmAudio, stop, playReply]);
 
   const toggleMic = useCallback(async () => {
+    if (pcmRef.current) { await finishPcmRef.current(); return; }
     if (recognitionRef.current) { recognitionRef.current.stop(); return; }
     if (recorderRef.current?.state === 'recording') { recorderRef.current.stop(); return; }
     modeChosen.current = true;
     failureKind.current = 'mic';
     if (modeRef.current !== 'live') {
       const Recognition = recognitionConstructor();
-      if (!Recognition) { setError('Voice preview is not supported in this browser. Open this page in Chrome, Edge or Safari and allow the microphone.'); return; }
+      if (!Recognition) {
+        if (!localSpeechSupported() || !navigator.mediaDevices?.getUserMedia) { setError('On-device voice needs a current browser with microphone and WebAssembly support on HTTPS.'); return; }
+        stop(); setError(null); warmAudio();
+        const turn = gate.current.begin();
+        const speech = localSpeechRef.current ?? createLocalSpeech(); localSpeechRef.current = speech;
+        const progress = (value: LocalSpeechProgress) => {
+          if (!gate.current.isCurrent(turn.id)) return;
+          const mb = value.loadedBytes ? ` · ${(value.loadedBytes / 1_000_000).toFixed(1)} MB received` : '';
+          setVoiceProgress(value.phase === 'transcribing' ? 'Recognizing what you said on this device…' : value.phase === 'ready' ? 'Voice pack ready.' : `Getting the on-device voice pack ready${mb}…`);
+        };
+        setVoicePhase('loading'); setVoiceProgress('Getting the on-device voice pack ready…'); setState('thinking');
+        try {
+          await speech.prepare({ signal: turn.signal, onProgress: progress });
+          if (!gate.current.isCurrent(turn.id)) return;
+          setVoicePhase('opening'); setVoiceProgress('Allow microphone access when your browser asks…');
+          const capture = await startPcmRecording({ signal: turn.signal, context: contextRef.current, onError: error => {
+            if (gate.current.isCurrent(turn.id)) { stop(); setError(error.message); }
+          } });
+          if (!gate.current.isCurrent(turn.id)) { capture.cancel(); return; }
+          pcmRef.current = capture;
+          const finish = async () => {
+            if (pcmRef.current !== capture || !gate.current.isCurrent(turn.id)) return;
+            pcmRef.current = null;
+            if (recordingTimer.current) clearTimeout(recordingTimer.current);
+            recordingTimer.current = null;
+            setIsRecording(false); setVoicePhase('transcribing'); setVoiceProgress('Recognizing what you said on this device…'); setState('thinking'); setPending(true);
+            try {
+              const samples = await capture.finish();
+              if (!gate.current.isCurrent(turn.id)) return;
+              const text = samples.length >= 160 ? await speech.transcribe(samples, { signal: turn.signal, onProgress: progress }) : '';
+              if (!gate.current.isCurrent(turn.id)) return;
+              setVoicePhase(null); setVoiceProgress(null); setState('idle'); setPending(false);
+              if (!text.trim()) { setError('I did not catch any words. Tap the microphone and try again.'); return; }
+              await sendRef.current(text);
+            } catch (error) {
+              if (!gate.current.isCurrent(turn.id)) return;
+              setVoicePhase(null); setVoiceProgress(null); setState('idle'); setPending(false);
+              setError(error instanceof Error ? error.message : 'On-device listening was interrupted. Please try again.');
+            }
+          };
+          finishPcmRef.current = finish;
+          setVoicePhase(null); setVoiceProgress(null); setIsRecording(true); setState('listening');
+          recordingTimer.current = setTimeout(() => { void finish(); }, 30_000);
+        } catch (error) {
+          if (!gate.current.isCurrent(turn.id)) return;
+          releaseMedia(); setState('idle'); setPending(false); setIsRecording(false);
+          setError(error instanceof DOMException && error.name === 'NotAllowedError' ? 'Allow microphone access in your browser to talk with SpeckyG.' : error instanceof Error ? error.message : 'The on-device voice pack could not start. Check your connection and try again.');
+        }
+        return;
+      }
       stop(); setError(null); warmAudio();
       const turn = gate.current.begin(); const recognition = new Recognition();
       recognitionRef.current = recognition; discardRecording.current = false;
@@ -366,7 +436,8 @@ export function useSpecky() {
 
   return { messages, state, mood, amplitude, config, mode, setMode, preferences, setPreferences,
     memories, addMemory, removeMemory, input, setInput, send, startTopic, stop, toggleMic,
-    micAvailable: mode !== 'live' ? !!recognitionConstructor() : !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== 'undefined' && config.transcription,
+    micAvailable: mode !== 'live' ? !!recognitionConstructor() || (localSpeechSupported() && !!navigator.mediaDevices?.getUserMedia) : !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== 'undefined' && config.transcription,
+    voicePhase, voiceProgress,
     cooldownUntil,
     error, clearError: () => setError(null), resetConversation, clearAll, isOnline, ready, pending, isRecording, replayLast, retryLast };
 }

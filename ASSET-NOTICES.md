@@ -7,3 +7,5 @@ The original reference is preserved in public/assets/speckyg-original-reference.
 TripoSR upstream: https://github.com/VAST-AI-Research/TripoSR (commit 107cefdc244c39106fa830359024f6a2f1c78871). Its MIT notice is retained in public/licenses/TripoSR.txt. That code license does not establish rights in reference artwork or automatically relicense the output model. No weights or reconstruction environment are distributed.
 
 The cove/forest backplates, branch albedo and leaf texture were generated for this prototype. They are fictional imagery, not a claim of a photographed location or fully volumetric forest. Asset hashes are recorded in ASSET-PROVENANCE.json. No voice is cloned; speech uses the visitor's available device/browser voice.
+
+Optional on-device speech recognition downloads Transformers.js 3.8.1, its matching ONNX Runtime and Xenova/whisper-tiny.en at revision 79fb389fc764e7c395bd330e9531d9d32ada7049. The converted model card declares Apache 2.0; upstream Whisper is MIT. Runtime and model files are not included in this repository. Sources and license texts are retained in public/licenses/LOCAL-SPEECH.txt.
