@@ -5,6 +5,7 @@ import type { CharacterState, Mood } from '../../shared/types';
 import type { CharacterReaction } from './types';
 import {createReconstructionRig} from './referenceRig';
 import {repairReferenceAnatomy} from './referenceRepairs';
+import type {PerformanceGesture} from './gestureDirector';
 
 export interface ReferenceMeshOptions {
   modelUrl?: string;
@@ -19,6 +20,7 @@ export interface ReferenceMeshHandle {
   readyPromise: Promise<THREE.Group>;
   dispose(): void;
   setSourceProjection(enabled: boolean): void;
+  setGesture(kind: PerformanceGesture, amount: number): void;
   /** Source-space weighted head, jaw, eyelid and wing deformation. */
   update(dt: number, elapsed: number, state: CharacterState, mood: Mood, amplitude: number, reducedMotion: boolean): void;
   react(reaction: CharacterReaction): void;
@@ -176,7 +178,7 @@ diffuseColor.rgb=mix(diffuseColor.rgb,sourcePhoto.rgb,uSourceProjection*frontWei
       installProjection(loadedRoot, sourceBounds, sourcePhoto);
       repairReferenceAnatomy(loadedRoot,sourceBounds);group.userData.anatomyRepairs=loadedRoot.userData.anatomyRepairs;
 
-      rig=createReconstructionRig(loadedRoot,sourceBounds);group.userData.deformation=rig.diagnostics;group.userData.deformationRig='authored-source-regions-v1';
+      rig=createReconstructionRig(loadedRoot,sourceBounds,sourcePhoto);group.userData.deformation=rig.diagnostics;group.userData.deformationRig='authored-source-regions-jointed-wings-v2';
       orientation.add(loadedRoot);
       // Normalize in the adapter's local frame. The caller may already have moved
       // or yawed group while the asynchronous assets were loading.
@@ -204,6 +206,7 @@ diffuseColor.rgb=mix(diffuseColor.rgb,sourcePhoto.rgb,uSourceProjection*frontWei
   return {
     group, readyPromise,
     setSourceProjection(enabled) { projectionEnabled = enabled; group.userData.sourceProjection = enabled; for (const uniform of projectionUniforms) uniform.value = enabled ? 1 : 0; },
+    setGesture(kind,amount) { rig?.setGesture(kind,amount); },
     react(kind) { rig?.react(kind); },
     update(dt, elapsed, state, mood, amplitude, reducedMotion) {
       rig?.update(dt,elapsed,state,mood,amplitude,reducedMotion,Number(group.userData.gazeX)||0,Number(group.userData.gazeY)||0);

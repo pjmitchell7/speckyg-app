@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import type {CharacterState, Mood} from '../../shared/types';
 import type {CharacterReaction} from './types';
+import type {PerformanceGesture} from './gestureDirector';
+import {createArticulatedWings} from './articulatedWings';
 
-export interface ReconstructionPose {headYaw:number;headTilt:number;headNod:number;wing:number;foldedWing:number;jaw:number;blink:number;breath:number}
+export interface ReconstructionPose {headYaw:number;headTilt:number;headNod:number;wing:number;foldedWing:number;jaw:number;blink:number;breath:number;wingForward?:number;foldedForward?:number;wrist?:number}
 const smooth=(a:number,b:number,x:number)=>THREE.MathUtils.smoothstep(x,a,b);
 const ellipse=(x:number,y:number,cx:number,cy:number,rx:number,ry:number)=>Math.sqrt(((x-cx)/rx)**2+((y-cy)/ry)**2);
 
@@ -39,10 +41,11 @@ function disconnectMandible(geometry:THREE.BufferGeometry,bounds:THREE.Box3){
 }
 
 /** Authored regional deformation, not a recovered anatomical skeleton. Rest UVs never change. */
-export function createReconstructionRig(root:THREE.Group,bounds:THREE.Box3){
+export function createReconstructionRig(root:THREE.Group,bounds:THREE.Box3,sourceTexture?:THREE.Texture){
+  const wings=createArticulatedWings(root,bounds,sourceTexture);
   const height=bounds.max.z-bounds.min.z,width=bounds.max.y-bounds.min.y;
   const source=(x:number,h:number,depth=0)=>new THREE.Vector3(depth,bounds.min.y+x*width,bounds.min.z+h*height);
-  const neck=source(.60,.535,.025),leftShoulder=source(.46,.55,.015),rightShoulder=source(.84,.55,-.015),hinge=source(.625,.66,.20);
+  const neck=source(.60,.535,.025),leftShoulder=source(.46,.55,.015),rightShoulder=source(.86,.55,-.015),leftWrist=source(.36,.385,.19),hinge=source(.625,.66,.20);
   // A dark recessed oral volume becomes visible through the disconnected jaw seam.
   // It is actual shaded geometry, rather than painting a black opening onto the photograph.
   const cavityGeometry=new THREE.SphereGeometry(1,20,12);
@@ -57,6 +60,7 @@ export function createReconstructionRig(root:THREE.Group,bounds:THREE.Box3){
   let weightedHead=0,weightedJaw=0,weightedWing=0,weightedEyes=0;
   root.traverse(object=>{
     if(!(object instanceof THREE.Mesh))return;
+    if(object.userData.authoredPointerPalm)return;
     const geometry=object.geometry;
     if(geometry.getAttribute('sourceRestPosition'))disconnectMandible(geometry,bounds);
     const rest=geometry.getAttribute('sourceRestPosition'),normals=geometry.getAttribute('sourceRestNormal');
@@ -67,8 +71,8 @@ export function createReconstructionRig(root:THREE.Group,bounds:THREE.Box3){
       const head=smooth(.515,.645,h);
       // The photographed lower mandible occupies this curved region below the hooked upper bill.
       const jaw=object.userData.oralCavity?0:geometry.getAttribute('rigMandible').getX(i);
-      const wing=(1-smooth(.45,.57,x))*smooth(.19,.32,h)*(1-smooth(.55,.59,h));
-      const folded=smooth(.79,.89,x)*smooth(.18,.3,h)*(1-smooth(.55,.60,h));
+      const wing=object.userData.wingSegment==='left'||object.userData.wingSegment==='hand'?1:0;
+      const folded=object.userData.wingSegment==='right'?1:0;
       const eye=(1-smooth(.84,1.14,ellipse(x,h,.541,.724,.079,.042)))*smooth(.07,.16,rest.getX(i));
       const farEye=(1-smooth(.8,1.14,ellipse(x,h,.79,.746,.027,.027)))*smooth(.06,.14,rest.getX(i));
       weights.set([head,jaw,wing,folded,eye,farEye],i*6);
@@ -82,7 +86,8 @@ export function createReconstructionRig(root:THREE.Group,bounds:THREE.Box3){
   const point=new THREE.Vector3(),normal=new THREE.Vector3(),axisX=new THREE.Vector3(1,0,0),axisY=new THREE.Vector3(0,1,0),axisZ=new THREE.Vector3(0,0,1);
   const pose:ReconstructionPose={headYaw:0,headTilt:0,headNod:0,wing:0,foldedWing:0,jaw:0,blink:0,breath:0};
   let reaction:CharacterReaction|null=null,reactionClock=10,smoothedJaw=0;
-  const diagnostics={weightedHead,weightedJaw,weightedWing,weightedEyes,vertices:parts.reduce((n,p)=>n+p.position.count,0),maxDisplacement:0,pose};
+  let gesture:PerformanceGesture='rest',gestureAmount=0;
+  const diagnostics={weightedHead,weightedJaw,weightedWing:weightedWing+wings.diagnostics.geometryVertices,weightedEyes,vertices:parts.reduce((n,p)=>n+p.position.count,0),maxDisplacement:0,pose,gesture:'rest',gestureAmount:0,wings:wings.diagnostics};
   function apply(next:ReconstructionPose){
     Object.assign(pose,next);let maxDisplacement=0;
     for(const part of parts){
@@ -95,8 +100,11 @@ export function createReconstructionRig(root:THREE.Group,bounds:THREE.Box3){
         point.z+=(bounds.min.z+.724*height-point.z)*next.blink*eye*.89;
         point.z+=(bounds.min.z+.746*height-point.z)*next.blink*far*.89;
         if(jaw>0){point.sub(hinge).applyAxisAngle(axisY,next.jaw*jaw).add(hinge);point.z-=next.jaw*jaw*.047;normal.applyAxisAngle(axisY,next.jaw*jaw);}
-        if(wing>0){point.sub(leftShoulder).applyAxisAngle(axisX,next.wing*wing).applyAxisAngle(axisZ,-next.wing*wing*.45).add(leftShoulder);normal.applyAxisAngle(axisX,next.wing*wing).applyAxisAngle(axisZ,-next.wing*wing*.45);}
-        if(folded>0){point.sub(rightShoulder).applyAxisAngle(axisX,next.foldedWing*folded).add(rightShoulder);normal.applyAxisAngle(axisX,next.foldedWing*folded);}
+        if(wing>0){
+          if(part.mesh.userData.wingSegment==='hand'){point.sub(leftWrist).applyAxisAngle(axisX,next.wrist??0).add(leftWrist);normal.applyAxisAngle(axisX,next.wrist??0);}
+          point.sub(leftShoulder).applyAxisAngle(axisX,next.wing*wing).add(leftShoulder);point.x+=(next.wingForward??0)*wing;normal.applyAxisAngle(axisX,next.wing*wing);
+        }
+        if(folded>0){point.sub(rightShoulder).applyAxisAngle(axisX,next.foldedWing*folded).add(rightShoulder);point.x+=(next.foldedForward??0)*folded;normal.applyAxisAngle(axisX,next.foldedWing*folded);}
         point.sub(neck).applyAxisAngle(axisZ,next.headYaw*head).applyAxisAngle(axisY,next.headNod*head).applyAxisAngle(axisX,next.headTilt*head).add(neck);
         normal.applyAxisAngle(axisZ,next.headYaw*head).applyAxisAngle(axisY,next.headNod*head).applyAxisAngle(axisX,next.headTilt*head);
         const chest=(1-head)*smooth(.19,.34,h)*(1-smooth(.8,.94,x));point.x+=next.breath*chest;
@@ -106,9 +114,10 @@ export function createReconstructionRig(root:THREE.Group,bounds:THREE.Box3){
       }
       part.position.needsUpdate=true;part.normal.needsUpdate=true;
     }
-    diagnostics.maxDisplacement=maxDisplacement;
+    diagnostics.maxDisplacement=Math.max(maxDisplacement,wings.diagnostics.maxDisplacement);
   }
   return {diagnostics,apply,
+    setGesture(kind:PerformanceGesture,amount:number){gesture=kind;gestureAmount=THREE.MathUtils.clamp(amount,0,1);diagnostics.gesture=kind;diagnostics.gestureAmount=gestureAmount;},
     react(kind:CharacterReaction){reaction=kind;reactionClock=0;},
     update(dt:number,elapsed:number,state:CharacterState,mood:Mood,amplitude:number,reduced:boolean,gazeX=0,gazeY=0){
       reactionClock+=Math.min(Math.max(dt,0),.08);
@@ -118,12 +127,18 @@ export function createReconstructionRig(root:THREE.Group,bounds:THREE.Box3){
       const target=state==='speaking'?THREE.MathUtils.clamp(amplitude,0,1)*.18:0;
       smoothedJaw=state==='speaking'?THREE.MathUtils.lerp(smoothedJaw,target,1-Math.exp(-Math.max(dt,0)*30)):0;
       const blinkCycle=t%5.3,blink=!reduced&&blinkCycle>4.94?Math.sin(Math.PI*(blinkCycle-4.94)/.36)**2:0;
+      const amount=reduced?0:gestureAmount;
+      wings.update(gesture,amount);
+      const wingTarget=gesture==='stretch'?-.95:gesture==='crossed'?1.15:0;
+      const foldedTarget=gesture==='stretch'?1.2:gesture==='crossed'?-1.3:0;
+      const wristTarget=gesture==='point'?0:gesture==='stretch'?2.52:gesture==='crossed'?3.56:Math.PI;
       apply({
         headYaw:motion*(Math.sin(t*.41)*.035+THREE.MathUtils.clamp(gazeX,-1,1)*.09),
-        headTilt:motion*(Math.sin(t*.57)*.025+(state==='listening'?-.065:0)+(reaction==='head'?envelope*.12:0)),
+        headTilt:motion*(Math.sin(t*.57)*.025+(state==='listening'?-.065:0)+(reaction==='head'?envelope*.12:0))+(gesture==='crossed'?amount*.16:0),
         headNod:motion*(Math.sin(t*.73)*.014+THREE.MathUtils.clamp(gazeY,-1,1)*.045+(state==='speaking'?Math.sin(t*3)*amplitude*.025:0)),
-        wing:motion*(Math.sin(t*.83)*.018+(reaction==='greet'?envelope*(.15+Math.sin(reactionClock*10)*.055):reaction==='wing'?envelope*.23:reaction==='dance'?envelope*Math.sin(t*5)*.16:0)),
-        foldedWing:motion*Math.sin(t*.83+.7)*.018,jaw:smoothedJaw,blink,breath:motion*Math.sin(t*1.8)*.0018,
+        wing:wingTarget*amount+motion*(Math.sin(t*.83)*.01),
+        wrist:THREE.MathUtils.lerp(Math.PI,wristTarget,amount),
+        foldedWing:foldedTarget*amount+motion*Math.sin(t*.83+.7)*.01,wingForward:gesture==='crossed'?amount*.14:0,foldedForward:gesture==='crossed'?amount*.16:0,jaw:smoothedJaw,blink,breath:motion*Math.sin(t*1.8)*.0018,
       });
     },
   };

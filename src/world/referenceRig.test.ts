@@ -24,10 +24,38 @@ test('real GLB has disconnected mandible vertices, independent moving surfaces a
  for(let i=0;i<attr.count;i++){const distance=Math.hypot(attr.getX(i)-rest[i*3],attr.getY(i)-rest[i*3+1],attr.getZ(i)-rest[i*3+2]);if(mandible.getX(i))jawMoved=Math.max(jawMoved,distance);else bodyMoved=Math.max(bodyMoved,distance);}
  assert(jawMoved>.02);assert(bodyMoved<1e-6);assert(root.getObjectByName('Recessed oral cavity'));
  assert.deepEqual(Array.from(geometry.getAttribute('sourceRestPosition').array),rest);
- rig.apply({...zero,wing:.23});assert(rig.diagnostics.maxDisplacement>.04);
+ rig.setGesture('point',1);rig.update(.05,2,'idle','warm',0,false);assert(rig.diagnostics.wings.maxDisplacement>.1);
  rig.apply({...zero,blink:1});assert(rig.diagnostics.maxDisplacement>.01);
  assert(Array.from(attr.array).every(Number.isFinite));assert(Array.from(geometry.getAttribute('normal').array).every(Number.isFinite));
  rig.apply(zero);for(let i=0;i<attr.count;i++)assert(Math.abs(attr.getX(i)-rest[i*3])<1e-6);
+});
+
+test('actual jointed wings rest low, stretch both sides, cross at separate depths and return without moving vest vertices',()=>{
+ const {root,mesh,bounds}=actualReconstruction(),rig=createReconstructionRig(root,bounds);
+ const left=root.getObjectByName('Left feathered shoulder bone')!,right=root.getObjectByName('Right feathered shoulder bone')!;
+ rig.setGesture('rest',0);rig.update(0,0,'idle','warm',0,false);
+ const restLeft=[...rig.diagnostics.wings.leftReach],restRight=[...rig.diagnostics.wings.rightReach];
+ assert(restLeft[2]<left.position.z-.20);assert(restRight[2]<right.position.z-.20);
+ const bodyRest=Array.from(mesh.geometry.getAttribute('position').array);
+ rig.setGesture('stretch',1);rig.update(0,0,'idle','warm',0,false);
+ assert(rig.diagnostics.wings.leftReach[1]<restLeft[1]-.17);assert(rig.diagnostics.wings.rightReach[1]>restRight[1]+.17);
+ assert.deepEqual(Array.from(mesh.geometry.getAttribute('position').array),bodyRest,'limb pose must not pull the vest');
+ rig.setGesture('crossed',1);rig.update(0,0,'idle','warm',0,false);root.updateMatrixWorld(true);
+ const crossedLeft=rig.diagnostics.wings.leftReach,crossedRight=rig.diagnostics.wings.rightReach;
+ assert(Math.abs(crossedLeft[1]-crossedRight[1])<.025,'forearms must overlap across chest');
+ assert(crossedLeft[0]>crossedRight[0]+.025,'near forearm must layer in front');
+ assert(crossedLeft[1]>restLeft[1]+.10);assert(crossedRight[1]<restRight[1]-.10);
+ assert(rig.diagnostics.pose.headTilt>.14);
+ rig.setGesture('point',1);rig.update(0,0,'idle','warm',0,false);root.updateMatrixWorld(true);
+ const pointer=root.getObjectsByProperty('name','Curved charcoal finger tip 0').find(object=>object.visible&&object.parent?.visible);
+ assert(pointer);assert(rig.diagnostics.wings.leftReach[2]>restLeft[2]+.12);
+ assert(root.getObjectsByProperty('name','Original reconstructed feathered palm').length===2);
+ for(let step=0;step<=20;step++){rig.setGesture('crossed',step/20);rig.update(.016,0,'idle','warm',0,false);root.updateMatrixWorld(true);root.traverse(object=>{if(object instanceof THREE.Mesh){assert(Array.from(object.geometry.getAttribute('position').array).every(Number.isFinite));assert(object.matrixWorld.elements.every(Number.isFinite));}});}
+ rig.setGesture('rest',0);rig.update(0,0,'idle','warm',0,false);
+ assert.deepEqual(rig.diagnostics.wings.leftReach,restLeft);assert.deepEqual(rig.diagnostics.wings.rightReach,restRight);
+ rig.setGesture('stretch',1);rig.update(0,0,'idle','warm',0,true);
+ assert.deepEqual(rig.diagnostics.wings.leftReach,restLeft,'reduced motion retains relaxed pose');
+ const photoCoordinates=mesh.geometry.getAttribute('sourceRestPosition');assert(Array.from(photoCoordinates.array).every(Number.isFinite));
 });
 
 test('speech-linked jaw closes immediately on cancellation; reduced motion preserves necessary speech articulation',()=>{

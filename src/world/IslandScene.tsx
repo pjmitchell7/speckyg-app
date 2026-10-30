@@ -5,12 +5,14 @@ import { createIslandWorld } from './island';
 import type { CharacterReaction, WorldInteraction } from './types';
 import type { CharacterState, Mood } from '../../shared/types';
 import {addCharacterEnvironment} from './characterLighting';
+import {GestureDirector, type PerformanceGesture} from './gestureDirector';
 
-export interface SceneAction { kind: WorldInteraction | CharacterReaction; id: number }
+export interface SceneAction { kind: WorldInteraction | CharacterReaction | PerformanceGesture; id: number }
 interface Props {
   state: CharacterState; mood: Mood; amplitude: number; reducedMotion: boolean;
   night: boolean; rain: boolean; action: SceneAction | null;
-  onInteract: (kind: WorldInteraction | CharacterReaction) => void;
+  replyId?: string; replyText?: string; speechCharIndex?: number|null;
+  onInteract: (kind: SceneAction['kind']) => void;
 }
 
 export function IslandScene(props: Props) {
@@ -58,18 +60,21 @@ export function IslandScene(props: Props) {
     const world = createIslandWorld(); scene.add(world.group);
     let mounted=true;
     const avatar = createReferenceMesh(); avatar.group.position.y=.55; scene.add(avatar.group);
+    const director = new GestureDirector();
     node.dataset.characterModelReady='false';
     void avatar.readyPromise.then(()=>{if(mounted){node.dataset.characterModelReady='true';node.dataset.characterTriangles=String(avatar.group.userData.triangles);node.dataset.characterRigged=String(!!avatar.group.userData.deformationRig);setModelReady(true);}}).catch(()=>{if(mounted){node.dataset.characterModelReady='false';setModelError(true);}});
-    let portrait=false;
+    let portrait=false, cameraHomeZ=8, cameraFocusY=2.3;
     function resize() {
       const width=node!.clientWidth, height=node!.clientHeight;
       if (!width || !height) return;
       portrait=width<760;
       camera.aspect=width/height;
       if (portrait) {
+        cameraHomeZ=7.2; cameraFocusY=2.1;
         camera.fov=48; camera.position.set(0,2.9,7.2); camera.lookAt(0,2.1,0);
         avatar.group.position.x=0;
       } else {
+        cameraHomeZ=8; cameraFocusY=2.3;
         camera.fov=42; camera.position.set(0,3.1,8); camera.lookAt(0,2.3,0);
         avatar.group.position.x=0;
       }
@@ -115,14 +120,17 @@ export function IslandScene(props: Props) {
       if(action.kind==='radio'||action.kind==='chime'||action.kind==='leaves') {
         world.interact(action.kind);
         if(action.kind==='radio') avatar.react('dance');
-      } else avatar.react(action.kind);
+      } else if(action.kind==='point'||action.kind==='stretch'||action.kind==='crossed') director.trigger(action.kind);
+      else if(action.kind==='wing') director.trigger('stretch');
+      else if(action.kind!=='rest') avatar.react(action.kind);
     };
     let lastTime=performance.now(),elapsed=0,lastStats=0,previousNight:boolean|undefined,previousRain:boolean|undefined,lastPoseStats=0;
     function frame(now:number) {
       const p=current.current;
       avatar.group.visible=true;
       node!.dataset.characterPresentation='animated-3d';
-      const dt=Math.min((now-lastTime)/1000,.05); lastTime=now; elapsed+=dt;
+      const frameSeconds=Math.max(0,(now-lastTime)/1000);
+      const dt=Math.min(frameSeconds,.05); lastTime=now; elapsed+=dt;
       if(p.night!==previousNight || p.rain!==previousRain) {
         world.setAtmosphere(p.night,p.rain);
         hemisphere.intensity=p.night?.55:p.rain?.8:.85;
@@ -134,8 +142,22 @@ export function IslandScene(props: Props) {
         node!.dataset.theme=p.night?'blue-hour':'sunshine';node!.dataset.rain=String(p.rain);
         previousNight=p.night;previousRain=p.rain;
       }
+      const gesture=director.update(frameSeconds,{state:p.state,mood:p.mood,replyId:p.replyId,text:p.replyText,charIndex:p.speechCharIndex,reducedMotion:p.reducedMotion});
+      avatar.setGesture(gesture.kind,gesture.amount);
       avatar.update(dt,elapsed,p.state,p.mood,p.amplitude,p.reducedMotion);
       world.update(dt,elapsed,p.reducedMotion);
+      // Give a real two-wing stretch breathing room on narrow screens. Fit the
+      // articulated hand endpoints, rather than shrinking the character mesh.
+      let framingZ=cameraHomeZ;
+      const wingPose=avatar.group.userData.deformation?.wings;
+      if(portrait&&gesture.kind==='stretch'&&wingPose){
+        const horizontal=Math.tan(THREE.MathUtils.degToRad(camera.fov/2))*camera.aspect*.86;
+        for(const reach of [wingPose.leftWorldReach,wingPose.rightWorldReach]){
+          if(Array.isArray(reach)&&reach.length===3&&reach.every(Number.isFinite)) framingZ=Math.max(framingZ,reach[2]+(Math.abs(reach[0])+.42)/horizontal);
+        }
+      }
+      camera.position.z=p.reducedMotion?cameraHomeZ:THREE.MathUtils.lerp(camera.position.z,framingZ,1-Math.exp(-frameSeconds*8));
+      camera.lookAt(0,cameraFocusY,0);
       const pose=avatar.group.userData.deformation?.pose;
       if(now-lastPoseStats>100&&pose){
         node!.dataset.characterState=p.state;
@@ -143,6 +165,10 @@ export function IslandScene(props: Props) {
         node!.dataset.characterWing=String(pose.wing);
         node!.dataset.characterBlink=String(pose.blink);
         node!.dataset.characterDisplacement=String(avatar.group.userData.deformation.maxDisplacement);
+        node!.dataset.characterGesture=gesture.kind;
+        node!.dataset.characterGestureAmount=String(gesture.amount);
+        node!.dataset.characterGestureSource=gesture.source;
+        node!.dataset.cameraDistance=String(camera.position.z);
         lastPoseStats=now;
       }
       renderer.render(scene,camera);

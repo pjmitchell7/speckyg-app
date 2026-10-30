@@ -14,8 +14,6 @@ import type { SceneAction } from './world/IslandScene';
 
 import { WorldBoundary } from './world/WorldBoundary';
 
-import type { CharacterReaction, WorldInteraction } from './world/types';
-
 import type { Preferences } from '../shared/types';
 
 import './island.css';
@@ -105,11 +103,11 @@ export default function App() {
 
   }
 
-  const interact=useCallback((kind:WorldInteraction|CharacterReaction)=>{
+  const interact=useCallback((kind:SceneAction['kind'])=>{
 
     setAction({kind,id:Date.now()+Math.random()});
 
-    const words:Record<string,string>={radio:'A little bass line for the branches.',chime:'Shells, a breeze, and a little space to breathe.',leaves:'The whole canopy has something to say.',greet:'Good company starts with a little hello.',head:'Yuh have mi attention.',wing:'A little room for the feathers.',dance:'The bass gets him every time.'};
+    const words:Record<string,string>={radio:'A little bass line for the branches.',chime:'Shells, a breeze, and a little space to breathe.',leaves:'The whole canopy has something to say.',greet:'Good company starts with a little hello.',head:'Yuh have mi attention.',wing:'A little room for the feathers.',dance:'The bass gets him every time.',point:'One little point, then mi a listen.',stretch:'A little room for the feathers.',crossed:'Mi a give that some thought.',rest:''};
 
     setNotice(words[kind]);
 
@@ -135,7 +133,7 @@ export default function App() {
 
     <section className={`character-scene state-${specky.state} mood-${specky.mood}`} aria-label="SpeckyG’s treetop world">
 
-      <WorldBoundary><Suspense fallback={<div className="quiet-loading" role="status">Opening the perch…</div>}><IslandScene state={specky.state} mood={specky.mood} amplitude={specky.amplitude} reducedMotion={motionOff} night={night} rain={rain} action={action} onInteract={interact}/></Suspense></WorldBoundary>
+      <WorldBoundary><Suspense fallback={<div className="quiet-loading" role="status">Opening the perch…</div>}><IslandScene state={specky.state} mood={specky.mood} amplitude={specky.amplitude} reducedMotion={motionOff} night={night} rain={rain} action={action} replyId={latestAssistant?.id} replyText={latestAssistant?.text} speechCharIndex={specky.speechCharIndex} onInteract={interact}/></Suspense></WorldBoundary>
 
     </section>
 
@@ -188,7 +186,7 @@ export default function App() {
 
         <div className="perch-menu-grid"><button onClick={()=>setPanel('history')}><MessageCircle size={20}/><span>Conversation history</span></button><button aria-label="Open preferences" onClick={()=>setPanel('settings')}><Settings2 size={20}/><span>Make it yours</span></button><button aria-label="Little things" onClick={()=>setPanel('memories')}><Feather size={20}/><span>Little things{specky.memories.length?` · ${specky.memories.length}`:''}</span></button><button aria-label="A fresh conversation" onClick={()=>{setPanel(null);setConfirm('chat');}}><RotateCcw size={20}/><span>Start fresh</span></button></div>
 
-        <details className="perch-extra"><summary>A little island life</summary><div className="island-extra-actions"><button aria-label="Stir the palm leaves" onClick={()=>{interact('leaves');setPanel(null);}}><Wind size={18}/>Breeze</button><button aria-label="Play the little radio" onClick={()=>{interact('radio');setPanel(null);}}><Music2 size={18}/>Radio</button><button aria-label="Ring the shell chime" onClick={()=>{interact('chime');setPanel(null);}}><Bell size={18}/>Chimes</button><button aria-label={night?'Bring back the sunshine':'Switch to blue hour'} aria-pressed={night} onClick={()=>{setNight(value=>!value);setPanel(null);}}>{night?<Sun size={18}/>:<Moon size={18}/>}Light</button><button aria-label={rain?'Stop the passing shower':'Start a passing shower'} aria-pressed={rain} onClick={()=>{setRain(value=>!value);setPanel(null);}}><CloudRain size={18}/>Shower</button><button aria-label="Ask SpeckyG to stretch his wings" onClick={()=>{interact('wing');setPanel(null);}}><Feather size={18}/>Wings</button><button aria-label="Ask SpeckyG to look this way" onClick={()=>{interact('head');setPanel(null);}}><Feather size={18}/>Look here</button><button aria-label="Greet SpeckyG" onClick={()=>{interact('greet');setPanel(null);}}><Feather size={18}/>Say hello</button></div></details>
+        <details className="perch-extra"><summary>A little island life</summary><div className="island-extra-actions"><button aria-label="Stir the palm leaves" onClick={()=>{interact('leaves');setPanel(null);}}><Wind size={18}/>Breeze</button><button aria-label="Play the little radio" onClick={()=>{interact('radio');setPanel(null);}}><Music2 size={18}/>Radio</button><button aria-label="Ring the shell chime" onClick={()=>{interact('chime');setPanel(null);}}><Bell size={18}/>Chimes</button><button aria-label={night?'Bring back the sunshine':'Switch to blue hour'} aria-pressed={night} onClick={()=>{setNight(value=>!value);setPanel(null);}}>{night?<Sun size={18}/>:<Moon size={18}/>}Light</button><button aria-label={rain?'Stop the passing shower':'Start a passing shower'} aria-pressed={rain} onClick={()=>{setRain(value=>!value);setPanel(null);}}><CloudRain size={18}/>Shower</button><button aria-label="Ask SpeckyG to stretch his wings" onClick={()=>{interact('wing');setPanel(null);}}><Feather size={18}/>Wings</button><button aria-label="Ask SpeckyG to look this way" onClick={()=>{interact('head');setPanel(null);}}><Feather size={18}/>Look here</button><button aria-label="Greet SpeckyG" onClick={()=>{interact('greet');setPanel(null);}}><Feather size={18}/>Say hello</button><button aria-label="Ask SpeckyG to point" onClick={()=>{interact('point');setPanel(null);}}><Feather size={18}/>Make a point</button><button aria-label="Ask SpeckyG to fold his wings" onClick={()=>{interact('crossed');setPanel(null);}}><Feather size={18}/>Fold wings</button></div></details>
 
         <details className="perch-extra"><summary>About this preview</summary><p className="menu-fine-print">SpeckyG is a moving 3D reconstruction of the reference, with an authored face and wing deformation rig. His sides and fine facial detail still need work. <a href={assetUrl('?view=likeness')}>Compare with the original</a></p><p className="menu-fine-print">Moving 3D foliage, birds and water sit within a photographic island setting. {specky.mode==='demo'?'Voice preview uses authored replies and device speech. Browsers without built-in recognition use an optional on-device voice pack; other browsers may process audio through their speech provider. This is not open-ended AI conversation.':specky.mode==='free'?'Free online sends recognized conversation text and enabled notes to Pollinations; on-device listening keeps recordings here, while built-in browser recognition may process audio with your browser provider. One request per 30 seconds per internet address. No API key or payment.':'Live voice sends your recording to the speech service and uses AI-generated replies.'} Recordings stop after 30 seconds. Conversations are not saved here.</p><button className="menu-about" aria-label="About SpeckyG" onClick={()=>setPanel('about')}>Meet SpeckyG<ArrowRight size={15}/></button></details>
 
