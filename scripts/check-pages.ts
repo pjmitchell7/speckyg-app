@@ -50,7 +50,7 @@ try {
   for (const item of manifest.icons) assert.equal((await context.request.get(new URL(item.src,origin+base+'manifest.webmanifest').href)).status(),200);
   const model=await context.request.get(origin+base+'models/speckyg-reconstruction.glb');assert.equal(model.status(),200);assert.equal((await model.body()).subarray(0,4).toString(),'glTF');
   if (webgl) await page.waitForFunction(()=>document.querySelector<HTMLElement>('.island-canvas')?.dataset.characterModelReady==='true',undefined,{timeout:60_000});
-  await page.getByRole('button',{name:'Open menu',exact:true}).click();await page.locator('summary').filter({hasText:'About this preview'}).click();
+  await page.getByRole('button',{name:'Open menu',exact:true}).click();await page.getByRole('button',{name:'About SpeckyG',exact:true}).click();
   assert.equal(new URL(await page.getByRole('link',{name:'Compare with the original'}).getAttribute('href') ?? '',page.url()).pathname,base);
   await context.setOffline(true);await page.goto(origin+base+'?view=likeness');
   await page.getByRole('link',{name:'Back to the island',exact:true}).waitFor();

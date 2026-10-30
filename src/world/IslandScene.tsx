@@ -12,6 +12,7 @@ interface Props {
   state: CharacterState; mood: Mood; amplitude: number; reducedMotion: boolean;
   night: boolean; rain: boolean; action: SceneAction | null;
   replyId?: string; replyText?: string; speechCharIndex?: number|null;
+  speechStartedAt?: number|null; speechBoundaryAt?: number|null; speechPlaybackId?: number|null;
   onInteract: (kind: SceneAction['kind']) => void;
 }
 
@@ -142,7 +143,12 @@ export function IslandScene(props: Props) {
         node!.dataset.theme=p.night?'blue-hour':'sunshine';node!.dataset.rain=String(p.rain);
         previousNight=p.night;previousRain=p.rain;
       }
-      const gesture=director.update(frameSeconds,{state:p.state,mood:p.mood,replyId:p.replyId,text:p.replyText,charIndex:p.speechCharIndex,reducedMotion:p.reducedMotion});
+      const speechNow=performance.now();
+      const gesture=director.update(frameSeconds,{state:p.state,mood:p.mood,replyId:p.replyId,text:p.replyText,charIndex:p.speechCharIndex,
+        playbackId:p.speechPlaybackId??undefined,
+        speechAge:p.speechStartedAt==null?null:Math.max(0,(speechNow-p.speechStartedAt)/1000),
+        boundaryAge:p.speechBoundaryAt==null?null:Math.max(0,(speechNow-p.speechBoundaryAt)/1000),
+        reducedMotion:p.reducedMotion});
       avatar.setGesture(gesture.kind,gesture.amount);
       avatar.update(dt,elapsed,p.state,p.mood,p.amplitude,p.reducedMotion);
       world.update(dt,elapsed,p.reducedMotion);
@@ -207,6 +213,7 @@ export function IslandScene(props: Props) {
         }
       });
       geometries.forEach(g=>g.dispose());materials.forEach(m=>m.dispose());textures.forEach(t=>t.dispose());
+      sun.shadow.dispose();
       renderer.dispose();renderer.domElement.remove();delete node.dataset.worldReady;
     };
   },[]);

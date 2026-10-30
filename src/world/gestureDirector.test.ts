@@ -8,13 +8,16 @@ function advance(director: GestureDirector, seconds: number, input = idle) {
   return frame;
 }
 test('rest opens the scene; all idle clips are occasional, bounded and return to rest', () => {
-  const director = new GestureDirector(() => 0), seen = new Set<string>();
+  let seed=103;
+  const director = new GestureDirector(() => {seed=(seed*1664525+1013904223)>>>0;return seed/2**32;}), seen = new Set<string>();
   assert.deepEqual(advance(director, 10), {kind:'rest',amount:0,source:'rest'});
   let activeFrames = 0, restFrames = 0;
-  for (let i=0; i<1600; i++) {
+  let previousActive='';
+  for (let i=0; i<4800; i++) {
     const frame = director.update(.05, idle); seen.add(frame.kind);
     assert(frame.amount>=0 && frame.amount<=1 && Number.isFinite(frame.amount));
     if (frame.kind === 'rest') restFrames++; else activeFrames++;
+    if(frame.kind!=='rest'&&frame.amount===0){assert.notEqual(frame.kind,previousActive);previousActive=frame.kind;}
   }
   assert.deepEqual([...seen].sort(), ['crossed','point','rest','stretch']);
   assert(restFrames > activeFrames*2, 'idle must spend most of its time relaxed');
@@ -22,7 +25,7 @@ test('rest opens the scene; all idle clips are occasional, bounded and return to
 test('content cues wait for actual playback and word boundaries; cancellation settles promptly', () => {
   const director = new GestureDirector(() => 1);
   const text = 'Take your time with this. Remember to call your friend.';
-  const speaking: GestureInput = {...idle,state:'speaking',text,replyId:'a',charIndex:2};
+  const speaking: GestureInput = {...idle,state:'speaking',speechAge:0,boundaryAge:0,text,replyId:'a',charIndex:2};
   assert.equal(advance(director, 3, {...speaking,state:'thinking'}).kind,'rest');
   assert.equal(advance(director, .5, speaking).kind,'rest');
   assert.equal(advance(director, .5, {...speaking,charIndex:text.indexOf('Remember')}).kind,'point');
@@ -56,7 +59,55 @@ test('dropped frames cannot leave a clip stuck or make speech timing run in slow
   const director = new GestureDirector(() => 1); director.trigger('stretch');
   assert.equal(director.update(2,idle).amount,1);
   assert.equal(director.update(3.5,idle).kind,'rest');
-  const speech: GestureInput = {...idle,state:'speaking',replyId:'slow',text:'A little pause. Remember this.'};
-  assert.equal(director.update(2,speech).kind,'point');
+  const speech: GestureInput = {...idle,state:'speaking',speechAge:0,boundaryAge:0,replyId:'slow',text:'A little pause. Remember this.'};
+  assert.equal(director.update(2,speech).kind,'rest');
+  assert.equal(director.update(10,speech).kind,'rest');
+  assert.equal(director.update(.05,{...speech,charIndex:speech.text!.indexOf('Remember')}).kind,'rest');
+  const fresh={...speech,replyId:'fresh',playbackId:2};
+  assert.equal(director.update(.05,{...fresh,charIndex:fresh.text!.indexOf('Remember')}).kind,'point');
   assert.equal(director.update(.4,{...idle,state:'listening'}).kind,'rest');
+});
+
+test('a word missed during a manual performance is consumed, never replayed afterward',()=>{
+  const d=new GestureDirector(()=>1),text='Take a moment. Remember this.';
+  const s:GestureInput={...idle,state:'speaking',replyId:'busy',playbackId:1,text,speechAge:0,boundaryAge:0};
+  d.update(.01,s);d.trigger('stretch');advance(d,1,s);
+  const word={...s,charIndex:text.indexOf('Remember')};
+  assert.equal(d.update(.05,word).source,'manual');
+  assert.equal(advance(d,6,word).kind,'rest','missed cue cannot wait behind the manual clip');
+  assert.equal(advance(d,2,{...word,charIndex:text.length-1}).kind,'rest');
+});
+
+test('old, unknown, passed-word and blocked-frame cues are dropped conservatively',()=>{
+  const text='Take a moment. Remember this.',index=text.indexOf('Remember');
+  const s:GestureInput={...idle,state:'speaking',replyId:'stale',playbackId:1,text,speechAge:0};
+  for(const event of [{charIndex:index,boundaryAge:.351},{charIndex:index},{charIndex:index+8,boundaryAge:0}]){
+    const d=new GestureDirector(()=>1);d.update(.01,s);
+    assert.equal(d.update(.02,{...s,...event}).kind,'rest');
+    assert.equal(d.update(.02,{...s,charIndex:index,boundaryAge:0}).kind,'rest','consumed cue cannot revive');
+  }
+  const blocked=new GestureDirector(()=>1);blocked.update(.01,s);
+  assert.equal(blocked.update(2.2,{...s,charIndex:index,boundaryAge:0}).kind,'rest');
+  assert.equal(blocked.update(.02,{...s,charIndex:index,boundaryAge:0}).kind,'rest');
+  const opening=new GestureDirector(()=>1);
+  assert.equal(opening.update(.02,{...s,text:'Remember this.',speechAge:2}).kind,'rest');
+});
+
+test('a fresh playback ID re-arms a repeated reply without requiring an observed idle frame',()=>{
+  const d=new GestureDirector(()=>1),text='Take a moment. Remember this.';
+  const s:GestureInput={...idle,state:'speaking',replyId:'same-message',playbackId:10,text,speechAge:0,boundaryAge:0};
+  d.update(.01,s);assert.equal(d.update(.05,{...s,charIndex:text.indexOf('Remember')}).kind,'point');
+  assert.equal(advance(d,4,s).kind,'rest');
+  const replay={...s,playbackId:11,charIndex:null};
+  assert.equal(d.update(.05,replay).kind,'rest');
+  assert.equal(d.update(.05,{...replay,charIndex:text.indexOf('Remember')}).kind,'point');
+});
+test('late or absent first word events cannot fire a later cue on an estimated clock',()=>{
+  const director=new GestureDirector(()=>.5),speech:GestureInput={...idle,state:'speaking',speechAge:0,boundaryAge:0,replyId:'late',text:'Take a moment. Remember this.'};
+  assert.equal(advance(director,8,speech).kind,'rest');
+  assert.equal(advance(director,.5,{...speech,charIndex:0}).kind,'rest');
+  assert.equal(advance(director,.5,{...speech,charIndex:15}).kind,'point');
+  const opening=new GestureDirector(()=>.5);
+  assert.equal(advance(opening,.5,{...speech,replyId:'opening',text:'Remember this.'}).kind,'point');
+  assert.equal(advance(new GestureDirector(),2,{...speech,state:'thinking',text:'Remember this.'}).kind,'rest');
 });

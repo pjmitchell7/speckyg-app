@@ -28,6 +28,9 @@ export function useSpecky() {
   const [mood, setMood] = useState<Mood>('warm');
   const [amplitude, setAmplitude] = useState(0);
   const [speechCharIndex, setSpeechCharIndex] = useState<number|null>(null);
+  const [speechStartedAt, setSpeechStartedAt] = useState<number|null>(null);
+  const [speechBoundaryAt, setSpeechBoundaryAt] = useState<number|null>(null);
+  const [speechPlaybackId, setSpeechPlaybackId] = useState<number|null>(null);
   const [input, setInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -77,6 +80,7 @@ export function useSpecky() {
     speechStartTimer.current = null;
     setVoicePhase(null); setVoiceProgress(null);
     setSpeechCharIndex(null);
+    setSpeechStartedAt(null); setSpeechBoundaryAt(null); setSpeechPlaybackId(null);
     const audio = audioRef.current;
     if (audio) { audio.onplay = audio.onended = audio.onerror = null; audio.pause(); audio.removeAttribute('src'); audio.load(); }
     audioRef.current = null;
@@ -111,7 +115,9 @@ export function useSpecky() {
     mounted.current = true;
     // Free/device voice has no owner-paid backend. Do not probe or activate one.
     const online = () => setIsOnline(navigator.onLine);
+    const visibility = () => { if (document.visibilityState === 'hidden') stop(); };
     window.addEventListener('online', online); window.addEventListener('offline', online);
+    document.addEventListener('visibilitychange', visibility);
     return () => {
       mounted.current = false; gate.current.cancel();
       localSpeechRef.current?.dispose(); localSpeechRef.current = null;
@@ -122,8 +128,9 @@ export function useSpecky() {
       if (recorder && recorder.state !== 'inactive') recorder.stop();
       releaseMedia(); contextRef.current?.close().catch(() => {}); contextRef.current = null;
       window.removeEventListener('online', online); window.removeEventListener('offline', online);
+      document.removeEventListener('visibilitychange', visibility);
     };
-  }, [releaseMedia]);
+  }, [releaseMedia, stop]);
 
   useEffect(() => { saveSettings(preferences); savePrivateData(preferences, memories); }, [preferences, memories]);
 
@@ -169,7 +176,8 @@ export function useSpecky() {
         if (!gate.current.isCurrent(turn.id)) return;
         if (speechStartTimer.current) clearTimeout(speechStartTimer.current);
         speechStartTimer.current = null;
-        setState('speaking'); setSpeechCharIndex(0); boundaryTime = performance.now();
+        const startedAt=performance.now();
+        setState('speaking'); setSpeechPlaybackId(turn.id); setSpeechStartedAt(startedAt); setSpeechCharIndex(null); setSpeechBoundaryAt(null); boundaryTime = startedAt;
         const move = (now: number) => {
           if (!gate.current.isCurrent(turn.id) || utteranceRef.current !== utterance) return;
           const syllable = Math.max(0, Math.sin((now-boundaryTime)*.023));
@@ -179,8 +187,8 @@ export function useSpecky() {
       };
       utterance.onboundary = event => {
         if (!gate.current.isCurrent(turn.id)) return;
-        boundaryTime = performance.now();
-        if (Number.isInteger(event.charIndex) && event.charIndex >= 0) setSpeechCharIndex(event.charIndex);
+        const boundaryAt=performance.now(); boundaryTime = boundaryAt;
+        if (event.name === 'word' && Number.isInteger(event.charIndex) && event.charIndex >= 0) { setSpeechCharIndex(event.charIndex); setSpeechBoundaryAt(boundaryAt); }
       };
       utterance.onend = () => { if (gate.current.isCurrent(turn.id)) { releaseMedia(); setState('idle'); failureKind.current = null; } };
       utterance.onerror = () => { if (gate.current.isCurrent(turn.id)) { releaseMedia(); setState('idle'); setError('His voice could not play. Check sound, then tap Hear this reply in history.'); } };
@@ -203,7 +211,7 @@ export function useSpecky() {
       const audio = new Audio(url); audioRef.current = audio;
       audio.onplay = () => {
         if (!gate.current.isCurrent(turn.id)) { audio.pause(); return; }
-        setState('speaking');
+        setState('speaking'); setSpeechPlaybackId(turn.id); setSpeechStartedAt(performance.now()); setSpeechCharIndex(null); setSpeechBoundaryAt(null);
         const context = contextRef.current;
         if (context && context.state !== 'closed') {
           try {
@@ -440,7 +448,7 @@ export function useSpecky() {
     stop(); warmAudio(); const turn = gate.current.begin(); void playReply(reply, turn);
   }, [playReply, stop, warmAudio]);
 
-  return { messages, state, mood, amplitude, speechCharIndex, config, mode, setMode, preferences, setPreferences,
+  return { messages, state, mood, amplitude, speechCharIndex, speechStartedAt, speechBoundaryAt, speechPlaybackId, config, mode, setMode, preferences, setPreferences,
     memories, addMemory, removeMemory, input, setInput, send, startTopic, stop, toggleMic,
     micAvailable: mode !== 'live' ? !!recognitionConstructor() || (localSpeechSupported() && !!navigator.mediaDevices?.getUserMedia) : !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== 'undefined' && config.transcription,
     voicePhase, voiceProgress,

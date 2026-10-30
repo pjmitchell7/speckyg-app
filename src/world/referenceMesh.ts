@@ -10,6 +10,7 @@ import type {PerformanceGesture} from './gestureDirector';
 export interface ReferenceMeshOptions {
   modelUrl?: string;
   textureUrl?: string;
+  originalTextureUrl?: string;
   height?: number;
   sourceProjection?: boolean;
 }
@@ -48,15 +49,18 @@ export function createReferenceMesh(options: ReferenceMeshOptions = {}): Referen
   // source X -> world Z (front), source Y -> world X, source Z -> world Y (up).
   orientation.applyMatrix4(new THREE.Matrix4().set(0,1,0,0, 0,0,1,0, 1,0,0,0, 0,0,0,1));
 
-  let disposed = false, loadedRoot: THREE.Group | null = null, sourcePhoto: THREE.Texture | null = null;
+  let disposed = false, loadedRoot: THREE.Group | null = null, sourcePhoto: THREE.Texture | null = null, originalPhoto: THREE.Texture | null = null;
   let projectionEnabled = options.sourceProjection ?? true;
   let rig:ReturnType<typeof createReconstructionRig>|null=null;
   const blinkUniforms:{value:number}[]=[];
   const projectionUniforms: { value: number }[] = [];
+  const disposedTextures = new Set<THREE.Texture>();
 
   function disposeTextures(textures: Iterable<THREE.Texture>) {
     const images = new Set<object>();
     for (const texture of textures) {
+      if (disposedTextures.has(texture)) continue;
+      disposedTextures.add(texture);
       const image = texture.image as { close?: () => void } | undefined;
       texture.dispose();
       if (image && typeof image === 'object' && typeof image.close === 'function' && !images.has(image)) {
@@ -66,16 +70,17 @@ export function createReferenceMesh(options: ReferenceMeshOptions = {}): Referen
   }
 
   function disposeRoot(root: THREE.Object3D) {
-    const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>(), textures = new Set<THREE.Texture>();
+    const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>(), textures = new Set<THREE.Texture>(), skeletons = new Set<THREE.Skeleton>();
     root.traverse(object => {
       if (!(object instanceof THREE.Mesh)) return;
       geometries.add(object.geometry);
+      if (object instanceof THREE.SkinnedMesh) skeletons.add(object.skeleton);
       for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
         materials.add(material);
         for (const value of Object.values(material)) if (value instanceof THREE.Texture) textures.add(value);
       }
     });
-    geometries.forEach(geometry => geometry.dispose()); materials.forEach(material => material.dispose()); disposeTextures(textures);
+    skeletons.forEach(skeleton => skeleton.dispose()); geometries.forEach(geometry => geometry.dispose()); materials.forEach(material => material.dispose()); disposeTextures(textures);
   }
 
   function installProjection(root: THREE.Object3D, bounds: THREE.Box3, texture: THREE.Texture) {
@@ -175,6 +180,14 @@ diffuseColor.rgb=mix(diffuseColor.rgb,sourcePhoto.rgb,uSourceProjection*frontWei
       sourcePhoto.colorSpace = THREE.SRGBColorSpace;
       sourcePhoto.wrapS = sourcePhoto.wrapT = THREE.ClampToEdgeWrapping;
       sourcePhoto.anisotropy = 4;
+      originalPhoto = await new THREE.TextureLoader().loadAsync(options.originalTextureUrl ?? assetUrl('assets/speckyg-original-reference.png'));
+      if (disposed) throw new Error('Reference mesh was disposed before its original artwork loaded.');
+      originalPhoto.colorSpace = THREE.SRGBColorSpace;
+      originalPhoto.wrapS = originalPhoto.wrapT = THREE.ClampToEdgeWrapping;
+      originalPhoto.anisotropy = 4;
+      // Native hand/wing surfaces use the supplied poster, while the existing
+      // reconstructed head retains its conditioning-view projection.
+      sourcePhoto.userData.originalArtwork = originalPhoto;
       installProjection(loadedRoot, sourceBounds, sourcePhoto);
       repairReferenceAnatomy(loadedRoot,sourceBounds);group.userData.anatomyRepairs=loadedRoot.userData.anatomyRepairs;
 
@@ -199,6 +212,7 @@ diffuseColor.rgb=mix(diffuseColor.rgb,sourcePhoto.rgb,uSourceProjection*frontWei
       group.userData.ready = false;
       if (loadedRoot) { loadedRoot.removeFromParent(); disposeRoot(loadedRoot); loadedRoot = null; }
       if (sourcePhoto) disposeTextures([sourcePhoto]); sourcePhoto = null;
+      if (originalPhoto) disposeTextures([originalPhoto]); originalPhoto = null;
       throw new Error('The articulated reconstruction could not load.', { cause: error });
     }
   })();
@@ -215,6 +229,7 @@ diffuseColor.rgb=mix(diffuseColor.rgb,sourcePhoto.rgb,uSourceProjection*frontWei
       if (disposed) return; disposed = true; group.userData.ready = false;
       if (loadedRoot) { loadedRoot.removeFromParent(); disposeRoot(loadedRoot); loadedRoot = null; }
       if (sourcePhoto) disposeTextures([sourcePhoto]); sourcePhoto = null; projectionUniforms.length = 0; blinkUniforms.length=0;rig=null; group.clear();
+      if (originalPhoto) disposeTextures([originalPhoto]); originalPhoto = null;
     },
   };
 }

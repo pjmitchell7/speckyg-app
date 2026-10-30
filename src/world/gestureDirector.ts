@@ -9,6 +9,10 @@ export interface GestureInput {
   text?: string;
   /** Actual speech-synthesis word boundary, when supplied by the browser. */
   charIndex?: number | null;
+  /** Monotonic native playback-start token; changes even when replaying one reply. */
+  playbackId?: number;
+  speechAge?: number | null;
+  boundaryAge?: number | null;
   reducedMotion: boolean;
 }
 export interface GestureFrame {
@@ -24,14 +28,14 @@ const clips = {
 };
 
 /** Content chooses a restrained performance cue; no provider or extra model is needed. */
-export function speechGesture(text: string, mood: Mood): {kind: ActiveGesture; index: number} | null {
+export function speechGesture(text: string, mood: Mood): {kind: ActiveGesture; index: number; end: number} | null {
   if (/\b(mi name|good fi meet|nice to meet|welcome|sorry|griev(?:e|ing)|funeral|passed away|death|died)\b/i.test(text) || mood === 'gentle') return null;
   const stretch = /\b(stretch|breathe|breath|relax|unwind|feathers?|wings?|tek it easy|take it easy)\b/i.exec(text);
-  if (stretch) return { kind: 'stretch', index: stretch.index };
+  if (stretch) return { kind: 'stretch', index: stretch.index, end: stretch.index + stretch[0].length };
   const point = /\b(remember|look|listen|one thing|watch|here['’]s|here is|first|mek sure|make sure)\b/i.exec(text);
-  if (point) return { kind: 'point', index: point.index };
+  if (point) return { kind: 'point', index: point.index, end: point.index + point[0].length };
   const question = /\b(really|wonder|think|suppose|tell mi|tell me|how come|what if)\b/i.exec(text);
-  if (question && (mood === 'curious' || mood === 'thoughtful' || mood === 'amused')) return { kind: 'crossed', index: question.index };
+  if (question && (mood === 'curious' || mood === 'thoughtful' || mood === 'amused')) return { kind: 'crossed', index: question.index, end: question.index + question[0].length };
   return null;
 }
 
@@ -43,15 +47,24 @@ export class GestureDirector {
   private frame: GestureFrame = {kind: 'rest', amount: 0, source: 'rest'};
   private idleTime = 0;
   private nextIdle: number;
-  private idleSequence = 0;
+  private lastIdle: ActiveGesture | null = null;
   private previousState: CharacterState = 'idle';
   private previousReply: string | undefined;
-  private speechTime = 0;
+  private previousPlayback: number | undefined;
   private cue: ReturnType<typeof speechGesture> = null;
   private cueUsed = false;
-  private boundarySeen = false;
   constructor(private random: () => number = Math.random) { this.nextIdle = this.pause(); }
   private pause() { return 14 + Math.max(0, Math.min(1, this.random())) * 10; }
+  private chooseIdle(mood: Mood): ActiveGesture {
+    const choices: {kind:ActiveGesture; weight:number}[] = [
+      {kind:'stretch',weight:6}, {kind:'crossed',weight:mood==='thoughtful'||mood==='curious'?4:2},
+      {kind:'point',weight:mood==='amused'?2:1},
+    ];
+    const eligible=choices.filter(choice=>choice.kind!==this.lastIdle);
+    let ticket=Math.max(0,Math.min(.999999,this.random()))*eligible.reduce((sum,choice)=>sum+choice.weight,0);
+    for(const choice of eligible){ticket-=choice.weight;if(ticket<0){this.lastIdle=choice.kind;return choice.kind;}}
+    this.lastIdle=eligible.at(-1)!.kind;return this.lastIdle;
+  }
   private start(kind: ActiveGesture, source: GestureFrame['source']) {
     this.active = {kind, source, clock: 0}; this.returning = null; this.idleTime = 0;
   }
@@ -70,32 +83,41 @@ export class GestureDirector {
     const runningClip = this.active;
     if (input.reducedMotion) {
       this.active = null; this.returning = null; this.queued = null; this.idleTime = 0; this.cueUsed = true;
-      this.previousState = input.state; this.previousReply = input.replyId;
+      this.previousState = input.state; this.previousReply = input.replyId; this.previousPlayback = input.playbackId;
       return this.frame = {kind: 'rest', amount: 0, source: 'rest'};
     }
-    const beganSpeech = input.state === 'speaking' && (this.previousState !== 'speaking' || this.previousReply !== input.replyId);
+    const beganSpeech = input.state === 'speaking' && (this.previousState !== 'speaking' || this.previousReply !== input.replyId || this.previousPlayback !== input.playbackId);
     if (beganSpeech) {
-      this.release(); this.queued = null; this.speechTime = 0; this.boundarySeen = false;
+      this.release(); this.queued = null;
       this.cue = speechGesture(input.text ?? '', input.mood); this.cueUsed = false;
     } else if (input.state !== this.previousState && (input.state !== 'idle' || this.previousState === 'speaking')) {
       this.release(); this.queued = null; this.idleTime = 0; this.nextIdle = this.pause();
     }
     if (input.state === 'speaking') {
-      this.speechTime += dt;
-      this.boundarySeen ||= (input.charIndex ?? 0) > 0;
-      // A time estimate is used only inside actual playback when word events are unavailable.
-      const cursor = this.boundarySeen ? input.charIndex ?? 0 : this.speechTime * 13;
-      if (!this.cueUsed && this.cue && cursor >= this.cue.index && !this.returning && this.active?.source !== 'manual') {
-        this.start(this.cue.kind, 'speech'); this.cueUsed = true;
+      // Native callbacks can arrive in a burst after a blocked frame. Drop this
+      // utterance's optional cue rather than performing a word that may be over.
+      if(dt>.35)this.cueUsed=true;
+      // A missed word is dropped, never queued behind another action or replayed
+      // after a slow frame. Ages describe monotonic native callback observations,
+      // not a measurement of the audible word's exact onset.
+      const boundary=typeof input.charIndex==='number'&&Number.isFinite(input.charIndex)&&input.charIndex>=0?input.charIndex:null;
+      const fresh=(age:number|null|undefined)=>typeof age==='number'&&Number.isFinite(age)&&age>=0&&age<=.35;
+      if (!this.cueUsed && this.cue) {
+        const opening=this.cue.index===0;
+        const reached=opening||(boundary!==null&&boundary>=this.cue.index);
+        if(reached){
+          this.cueUsed=true;
+          const timely=opening?fresh(input.speechAge):boundary!==null&&boundary<this.cue.end&&fresh(input.boundaryAge);
+          if(timely&&!this.returning&&this.active?.source!=='manual')this.start(this.cue.kind,'speech');
+        }
       }
     } else if (input.state === 'idle' && input.mood !== 'gentle' && !this.active && !this.returning) {
       this.idleTime += dt;
       if (this.idleTime >= this.nextIdle) {
-        const sequence: ActiveGesture[] = ['stretch', 'point', 'crossed'];
-        this.start(sequence[this.idleSequence++ % sequence.length], 'idle');
+        this.start(this.chooseIdle(input.mood), 'idle');
       }
     }
-    this.previousState = input.state; this.previousReply = input.replyId;
+    this.previousState = input.state; this.previousReply = input.replyId; this.previousPlayback = input.playbackId;
     if (this.returning) {
       this.returning.clock += dt;
       const amount = this.returning.amount * (1 - smooth(this.returning.clock / .3));
