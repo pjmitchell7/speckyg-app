@@ -1,0 +1,53 @@
+{
+  "scope": "Visual assets are excluded from the software license; see ASSET-NOTICES.md.",
+  "assets": [
+    {
+      "path": "public/assets/environment/branch-bark.jpg",
+      "sha256": "ba56b2431147322d32e89f17f80354fc0c2815d1acc8ff92b9d26e5b5fc96270"
+    },
+    {
+      "path": "public/assets/environment/sea-grape-leaf.png",
+      "sha256": "94467c660262ce9913b486b76a163fb9e33b5a94422881fed9707c6bd40b428c"
+    },
+    {
+      "path": "public/assets/environment/treetop-landscape.jpg",
+      "sha256": "5dbdc00c7320ed56106d576f3361a91cd6ab7663b4d8d819399c1f462cef7465"
+    },
+    {
+      "path": "public/assets/environment/treetop-portrait.jpg",
+      "sha256": "fa6f2704773fa385678ce629247c6dbf21e7e48385fe229602169bab950117f0"
+    },
+    {
+      "path": "public/assets/speckyg-character.png",
+      "sha256": "1c38ad9b8913c0f493eaeb3fb22184473d048394b7bc97164297948d45123c8e"
+    },
+    {
+      "path": "public/assets/speckyg-original-reference.png",
+      "sha256": "46b297a8935c74af36282b9d066f1e81830443ccf07c8dd25e062d767ef1a7b7"
+    },
+    {
+      "path": "public/assets/speckyg-reference-artwork.png",
+      "sha256": "5aa24e04cf307c03733c69b9c6bd9086454a21a20d79f0d8fd5e02cea9f5dd8d"
+    },
+    {
+      "path": "public/icon.svg",
+      "sha256": "247ac9d52f068b8ed7790ee8ca5088b285476e1abfb292dba0e06cb7062b6007"
+    },
+    {
+      "path": "public/icons/icon-192.png",
+      "sha256": "b8f59b0916edcfb045a4626bbf977b8a4910339521e9aa846f6279f853bf2bbe"
+    },
+    {
+      "path": "public/icons/icon-512.png",
+      "sha256": "56321641bcb6c6fa0caa2fcfaae0ca9556520b205b08d517ef7f7d9056e350d5"
+    },
+    {
+      "path": "public/icons/icon-maskable.png",
+      "sha256": "919dd1a1fc954cded458126213af8a1b3af3c936a6115229b9c283b012dd6bb8"
+    },
+    {
+      "path": "public/models/speckyg-reconstruction.glb",
+      "sha256": "038c9323c1692df13d3781455390becf466edd1d8841eb55979153791ba83986"
+    }
+  ]
+}

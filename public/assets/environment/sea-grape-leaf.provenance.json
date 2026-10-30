@@ -1,0 +1,9 @@
+{
+  "asset": "public/assets/environment/sea-grape-leaf.png",
+  "method": "Built-in imagegen, new generation, transparent background; no reference image uploaded",
+  "date": "2026-10-30",
+  "sha256": "94467c660262ce9913b486b76a163fb9e33b5a94422881fed9707c6bd40b428c",
+  "prompt": "Use case: photorealistic-natural. Asset type: single botanical leaf albedo texture for curved 3D foliage in a Jamaican coastal treetop scene. Generate exactly one mature sea-grape leaf (Coccoloba uvifera), face-on orthographic top view, rounded broad heart/circular outline, rich realistic olive green with warm yellow-green translucent areas, fine branching reddish golden midrib and veins, natural leathery waxy grain, tiny brown edge imperfections. Stem at bottom centre, leaf tip at top centre. Entire leaf occupies almost the full square image with only a narrow transparent margin. Genuinely transparent background, preserved alpha. Soft even diffuse illumination, no cast shadow, no environmental reflection, no scene, no additional leaves, no branch, no text, no watermark. Photographic botanical detail, not vector art, not a plastic render.",
+  "usage": "Alpha-tested albedo on curved, instanced Three.js leaf geometry; original generated alpha preserved",
+  "limitation": "Generated botanical appearance, not a captured physical material or proof of species accuracy. Distant environment remains photographic."
+}
